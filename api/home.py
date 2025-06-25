@@ -1,14 +1,25 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 import requests
 from bs4 import BeautifulSoup
 from functools import lru_cache
-import time
 
 home_bp = Blueprint('home', __name__)
 
 BASE_URL = 'https://komiku.org'
 HEADERS = {
     'User-Agent': 'Mozilla/5.0'
+}
+
+SECTION_MAP = {
+    'Trending_Komik': 'Komik Trending',
+    'Rekomendasi_Komik': 'Rekomendasi Komik',
+    'Komik_Hot_Manga': 'Hot Manga',
+    'Komik_Hot_Manhwa': 'Hot Manhwa',
+    'Komik_Hot_Manhua': 'Hot Manhua',
+    'Terbaru': {
+        'ls2': 'Komik Terbaru (Besar)',
+        'ls4': 'Komik Terbaru (Mini)'
+    }
 }
 
 def get_soup(url=BASE_URL):
@@ -38,7 +49,7 @@ def parse_section(soup, section_id, article_class='ls2'):
             img_tag = article.find('img')
             image_url = img_tag.get('data-src') or img_tag.get('src')
             rank_tag = article.find('span', class_='hot')
-            rank = rank_tag.text.strip() if rank_tag else ""
+            rank = rank_tag.text.strip() if rank_tag else ''
 
             komik_list.append({
                 'title': title,
@@ -54,14 +65,14 @@ def parse_section(soup, section_id, article_class='ls2'):
 
     return komik_list
 
-def get_all_home_data():
+def get_all_sections():
     soup = get_soup()
     if not soup:
         return {'error': 'Gagal mengambil halaman'}
 
-    # Genre list
-    genre_select = soup.find('select', {'name': 'genre'})
+    # Genre parsing
     genres = []
+    genre_select = soup.find('select', {'name': 'genre'})
     if genre_select:
         for option in genre_select.find_all('option'):
             value = option.get('value', '').strip()
@@ -69,23 +80,31 @@ def get_all_home_data():
             if value and name.lower() != 'genre 1':
                 genres.append({'slug': value, 'name': name})
 
+    # Section data
+    section_data = []
+
+    for section_id, label in SECTION_MAP.items():
+        if isinstance(label, dict):
+            for cls, sublabel in label.items():
+                items = parse_section(soup, section_id, cls)
+                if items:
+                    section_data.append({'title': sublabel, 'items': items})
+        else:
+            items = parse_section(soup, section_id)
+            if items:
+                section_data.append({'title': label, 'items': items})
+
     return {
-        'trending': parse_section(soup, 'Trending_Komik'),
-        'rekomendasi': parse_section(soup, 'Rekomendasi_Komik'),
-        'hot_manga': parse_section(soup, 'Komik_Hot_Manga'),
-        'hot_manhwa': parse_section(soup, 'Komik_Hot_Manhwa'),
-        'hot_manhua': parse_section(soup, 'Komik_Hot_Manhua'),
-        'terbaru_besar': parse_section(soup, 'Terbaru', 'ls2'),
-        'terbaru_mini': parse_section(soup, 'Terbaru', 'ls4'),
+        'sections': section_data,
         'genres': genres
     }
 
 @lru_cache(maxsize=1)
 def get_cached_home():
-    return get_all_home_data()
+    return get_all_sections()
 
 @home_bp.route('/home')
-def home_combined():
+def home_endpoint():
     data = get_cached_home()
     if 'error' in data:
         return jsonify(data), 500
