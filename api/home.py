@@ -10,29 +10,29 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0'
 }
 
-SECTION_MAP = {
-    'Trending_Komik': 'Komik Trending',
-    'Rekomendasi_Komik': 'Rekomendasi Komik',
-    'Komik_Hot_Manga': 'Hot Manga',
-    'Komik_Hot_Manhwa': 'Hot Manhwa',
-    'Komik_Hot_Manhua': 'Hot Manhua',
-    # 'Terbaru': handled manually from 2 sources (home + /komik-terbaru/)
+# ID section → class artikel
+SECTION_CLASS_MAP = {
+    'Rekomendasi_Komik': ('Rekomendasi Komik', 'ls2'),
+    'Komik_Hot_Manga': ('Hot Manga', 'ls2'),
+    'Komik_Hot_Manhwa': ('Hot Manhwa', 'ls2'),
+    'Komik_Hot_Manhua': ('Hot Manhua', 'ls2'),
+    'Terbaru': ('Komik Terbaru', 'ls8')
 }
 
-
-def get_soup(url):
+def get_soup(url=BASE_URL):
     try:
         response = requests.get(url, headers=HEADERS, timeout=10)
         response.raise_for_status()
         return BeautifulSoup(response.text, 'html.parser')
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
         return None
 
 def parse_article(article):
     try:
         title_tag = article.find('h3').find('a')
-        title = title_tag.text.strip() if title_tag else ''
-        link = BASE_URL + title_tag['href'] if title_tag else ''
+        title = title_tag.text.strip()
+        link = BASE_URL + title_tag['href']
 
         img_tag = article.find('img')
         image_url = img_tag.get('data-src') or img_tag.get('src') if img_tag else ''
@@ -60,51 +60,30 @@ def parse_article(article):
             'genre': genre,
             'rank': rank
         }
-    except:
+    except Exception as e:
+        print(f"Error parsing article: {e}")
         return None
 
-def parse_section(soup, section_id, article_class='ls2'):
+def parse_section(soup, section_id, article_class):
     section = soup.find('section', {'id': section_id})
     if not section:
         return []
 
-    return [
-        komik for article in section.find_all('article', class_=article_class)
-        if (komik := parse_article(article)) is not None
-    ]
+    komik_list = []
+    articles = section.find_all('article', class_=article_class)
+    for article in articles:
+        komik = parse_article(article)
+        if komik:
+            komik_list.append(komik)
 
-def get_komik_terbaru_combined():
-    # Ambil 6 dari homepage
-    homepage_soup = get_soup(BASE_URL)
-    items_home = []
-    if homepage_soup:
-        items_home = parse_section(homepage_soup, 'Terbaru', 'ls8')
-
-    # Ambil 20+ dari halaman /komik-terbaru/
-    terbaru_soup = get_soup(BASE_URL + '/komik-terbaru/')
-    items_page = []
-    if terbaru_soup:
-        articles = terbaru_soup.find_all('article', class_='ls4')
-        for article in articles:
-            komik = parse_article(article)
-            if komik:
-                items_page.append(komik)
-
-    # Gabungkan keduanya (hindari duplikat berdasarkan title)
-    seen = set()
-    combined = []
-    for item in items_home + items_page:
-        if item['title'] not in seen:
-            combined.append(item)
-            seen.add(item['title'])
-    return combined
+    return komik_list
 
 def get_all_sections():
-    soup = get_soup(BASE_URL)
+    soup = get_soup()
     if not soup:
         return {'error': 'Gagal mengambil halaman'}
 
-    # Genre
+    # Genre dari <select name="genre">
     genres = []
     genre_select = soup.find('select', {'name': 'genre'})
     if genre_select:
@@ -114,19 +93,12 @@ def get_all_sections():
             if value and name.lower() != 'genre 1':
                 genres.append({'slug': value, 'name': name})
 
-    # Sections
+    # Section Komik
     section_data = []
-
-    # Sections dari peta biasa
-    for section_id, label in SECTION_MAP.items():
-        items = parse_section(soup, section_id)
+    for section_id, (label, article_class) in SECTION_CLASS_MAP.items():
+        items = parse_section(soup, section_id, article_class)
         if items:
             section_data.append({'title': label, 'items': items})
-
-    # Tambahkan Komik Terbaru dari 2 sumber
-    terbaru_items = get_komik_terbaru_combined()
-    if terbaru_items:
-        section_data.append({'title': 'Komik Terbaru', 'items': terbaru_items})
 
     return {
         'sections': section_data,
@@ -143,3 +115,4 @@ def home_endpoint():
     if 'error' in data:
         return jsonify(data), 500
     return jsonify(data)
+            
