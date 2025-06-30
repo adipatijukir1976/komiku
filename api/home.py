@@ -17,8 +17,7 @@ SECTION_MAP = {
     'Komik_Hot_Manhwa': 'Hot Manhwa',
     'Komik_Hot_Manhua': 'Hot Manhua',
     'Terbaru': {
-        'ls2': 'Komik Terbaru (Besar)',
-        'ls4': 'Komik Terbaru (Mini)'
+        'ls4': 'Komik Terbaru'
     }
 }
 
