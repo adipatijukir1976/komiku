@@ -40,13 +40,25 @@ def parse_section(soup, section_id, article_class='ls2'):
             title_tag = article.find('h3').find('a')
             title = title_tag.text.strip()
             link = BASE_URL + title_tag['href']
+
+            # Chapter & link
             chapter_tag = article.find('a', class_='ls2l') or article.find('a', class_='ls24')
             chapter = chapter_tag.text.strip() if chapter_tag else ''
             chapter_link = BASE_URL + chapter_tag['href'] if chapter_tag else ''
-            genre_tag = article.find('span', class_='ls2t') or article.find('span', class_='ls4s') or article.find('span')
+
+            # Genre or update info
+            genre_tag = (
+                article.find('span', class_='ls2t') or
+                article.find('span', class_='ls4s') or
+                article.find('span')
+            )
             genre = genre_tag.text.strip() if genre_tag else ''
+
+            # Gambar
             img_tag = article.find('img')
-            image_url = img_tag.get('data-src') or img_tag.get('src')
+            image_url = img_tag.get('data-src') or img_tag.get('src') if img_tag else ''
+
+            # Ranking (optional)
             rank_tag = article.find('span', class_='hot')
             rank = rank_tag.text.strip() if rank_tag else ''
 
