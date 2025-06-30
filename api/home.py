@@ -1,118 +1,97 @@
 from flask import Blueprint, jsonify
 import requests
 from bs4 import BeautifulSoup
-from functools import lru_cache
 
 home_bp = Blueprint('home', __name__)
 
-BASE_URL = 'https://komiku.org'
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0'
-}
+@home_bp.route('/home', methods=['GET'])
+def home():
+    url = 'https://komiku.org'
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
 
-# ID section → class artikel
-SECTION_CLASS_MAP = {
-    'Rekomendasi_Komik': ('Rekomendasi Komik', 'ls2'),
-    'Komik_Hot_Manga': ('Hot Manga', 'ls2'),
-    'Komik_Hot_Manhwa': ('Hot Manhwa', 'ls2'),
-    'Komik_Hot_Manhua': ('Hot Manhua', 'ls2'),
-    'Terbaru': ('Komik Terbaru', 'ls8')
-}
+    # Ambil deskripsi situs
+    def extract_trending():
+        section = soup.find('section', id='Trending_Komik')
+        desc = section.find('p').get_text(strip=True) if section else ''
+        return {'description': desc}
 
-def get_soup(url=BASE_URL):
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        response.raise_for_status()
-        return BeautifulSoup(response.text, 'html.parser')
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        return None
+    # Ambil daftar komik dari section ls2
+    def extract_ls2(section_id):
+        section = soup.find('section', id=section_id)
+        result = []
+        if section:
+            for article in section.find_all('article', class_='ls2'):
+                title_tag = article.find('h3')
+                title = title_tag.get_text(strip=True) if title_tag else ''
+                link = title_tag.a['href'] if title_tag and title_tag.a else ''
+                genre = article.find('span', class_='ls2t')
+                chapter = article.find('a', class_='ls2l')
+                image = article.find('img')
+                rank = article.find('span', class_='svg hot')
+                result.append({
+                    'title': title,
+                    'link': link,
+                    'genre': genre.get_text(strip=True) if genre else '',
+                    'latest_chapter': chapter.get_text(strip=True) if chapter else '',
+                    'chapter_link': chapter['href'] if chapter else '',
+                    'thumbnail': image['data-src'] if image and image.has_attr('data-src') else '',
+                    'rank': rank.get_text(strip=True) if rank else None
+                })
+        return result
 
-def parse_article(article):
-    try:
-        title_tag = article.find('h3').find('a')
-        title = title_tag.text.strip()
-        link = BASE_URL + title_tag['href']
+    # Ambil daftar komik terbaru
+    def extract_terbaru():
+        section = soup.find('section', id='Terbaru')
+        result = []
+        if section:
+            for article in section.find_all('article', class_='ls8'):
+                title_tag = article.find('h3')
+                title = title_tag.get_text(strip=True) if title_tag else ''
+                link = title_tag.a['href'] if title_tag and title_tag.a else ''
+                up_label = article.find('div', class_='ls84')
+                image = article.find('img')
+                result.append({
+                    'title': title,
+                    'link': link,
+                    'up_info': up_label.get_text(strip=True) if up_label else '',
+                    'thumbnail': image['src'] if image else ''
+                })
+        return result
 
-        img_tag = article.find('img')
-        image_url = img_tag.get('data-src') or img_tag.get('src') if img_tag else ''
+    # Ambil info filter
+    def extract_filter_info():
+        section = soup.find('section', id='Filter')
+        info = section.find('p').get_text(strip=True) if section else ''
 
-        chapter_tag = article.find('a', class_='ls2l') or article.find('a', class_='ls24')
-        chapter = chapter_tag.text.strip() if chapter_tag else ''
-        chapter_link = BASE_URL + chapter_tag['href'] if chapter_tag else ''
+        form = section.find('form') if section else None
+        filters = {}
 
-        genre_tag = (
-            article.find('span', class_='ls2t') or
-            article.find('span', class_='ls4s') or
-            article.find('span')
-        )
-        genre = genre_tag.text.strip() if genre_tag else ''
-
-        rank_tag = article.find('span', class_='hot')
-        rank = rank_tag.text.strip() if rank_tag else ''
+        if form:
+            selects = form.find_all('select')
+            for select in selects:
+                name = select.get('name')
+                options = [{
+                    'value': opt.get('value'),
+                    'text': opt.get_text(strip=True)
+                } for opt in select.find_all('option')]
+                filters[name] = options
 
         return {
-            'title': title,
-            'link': link,
-            'image_url': image_url,
-            'chapter': chapter,
-            'chapter_link': chapter_link,
-            'genre': genre,
-            'rank': rank
+            'info': info,
+            'filters': filters
         }
-    except Exception as e:
-        print(f"Error parsing article: {e}")
-        return None
 
-def parse_section(soup, section_id, article_class):
-    section = soup.find('section', {'id': section_id})
-    if not section:
-        return []
-
-    komik_list = []
-    articles = section.find_all('article', class_=article_class)
-    for article in articles:
-        komik = parse_article(article)
-        if komik:
-            komik_list.append(komik)
-
-    return komik_list
-
-def get_all_sections():
-    soup = get_soup()
-    if not soup:
-        return {'error': 'Gagal mengambil halaman'}
-
-    # Genre dari <select name="genre">
-    genres = []
-    genre_select = soup.find('select', {'name': 'genre'})
-    if genre_select:
-        for option in genre_select.find_all('option'):
-            value = option.get('value', '').strip()
-            name = option.text.strip()
-            if value and name.lower() != 'genre 1':
-                genres.append({'slug': value, 'name': name})
-
-    # Section Komik
-    section_data = []
-    for section_id, (label, article_class) in SECTION_CLASS_MAP.items():
-        items = parse_section(soup, section_id, article_class)
-        if items:
-            section_data.append({'title': label, 'items': items})
-
-    return {
-        'sections': section_data,
-        'genres': genres
+    # Gabungkan semua data ke JSON
+    data = {
+        'deskripsi_situs': extract_trending(),
+        'rekomendasi_komik': extract_ls2('Rekomendasi_Komik'),
+        'rilisan_terbaru': extract_terbaru(),
+        'filter_info': extract_filter_info(),
+        'manga_populer': extract_ls2('Komik_Hot_Manga'),
+        'manhwa_populer': extract_ls2('Komik_Hot_Manhwa'),
+        'manhua_populer': extract_ls2('Komik_Hot_Manhua')
     }
 
-@lru_cache(maxsize=1)
-def get_cached_home():
-    return get_all_sections()
-
-@home_bp.route('/home')
-def home_endpoint():
-    data = get_cached_home()
-    if 'error' in data:
-        return jsonify(data), 500
     return jsonify(data)
-            
