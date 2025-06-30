@@ -16,12 +16,11 @@ SECTION_MAP = {
     'Komik_Hot_Manga': 'Hot Manga',
     'Komik_Hot_Manhwa': 'Hot Manhwa',
     'Komik_Hot_Manhua': 'Hot Manhua',
-    'Terbaru': {
-        'ls8': 'Komik Terbaru'
-    }
+    # 'Terbaru': handled manually from 2 sources (home + /komik-terbaru/)
 }
 
-def get_soup(url=BASE_URL):
+
+def get_soup(url):
     try:
         response = requests.get(url, headers=HEADERS, timeout=10)
         response.raise_for_status()
@@ -29,60 +28,83 @@ def get_soup(url=BASE_URL):
     except Exception:
         return None
 
+def parse_article(article):
+    try:
+        title_tag = article.find('h3').find('a')
+        title = title_tag.text.strip() if title_tag else ''
+        link = BASE_URL + title_tag['href'] if title_tag else ''
+
+        img_tag = article.find('img')
+        image_url = img_tag.get('data-src') or img_tag.get('src') if img_tag else ''
+
+        chapter_tag = article.find('a', class_='ls2l') or article.find('a', class_='ls24')
+        chapter = chapter_tag.text.strip() if chapter_tag else ''
+        chapter_link = BASE_URL + chapter_tag['href'] if chapter_tag else ''
+
+        genre_tag = (
+            article.find('span', class_='ls2t') or
+            article.find('span', class_='ls4s') or
+            article.find('span')
+        )
+        genre = genre_tag.text.strip() if genre_tag else ''
+
+        rank_tag = article.find('span', class_='hot')
+        rank = rank_tag.text.strip() if rank_tag else ''
+
+        return {
+            'title': title,
+            'link': link,
+            'image_url': image_url,
+            'chapter': chapter,
+            'chapter_link': chapter_link,
+            'genre': genre,
+            'rank': rank
+        }
+    except:
+        return None
+
 def parse_section(soup, section_id, article_class='ls2'):
     section = soup.find('section', {'id': section_id})
     if not section:
         return []
 
-    komik_list = []
-    for article in section.find_all('article', class_=article_class):
-        try:
-            # Judul & link
-            title_tag = article.find('h3').find('a')
-            title = title_tag.text.strip() if title_tag else ''
-            link = BASE_URL + title_tag['href'] if title_tag else ''
+    return [
+        komik for article in section.find_all('article', class_=article_class)
+        if (komik := parse_article(article)) is not None
+    ]
 
-            # Gambar cover
-            img_tag = article.find('img')
-            image_url = img_tag.get('data-src') or img_tag.get('src') if img_tag else ''
+def get_komik_terbaru_combined():
+    # Ambil 6 dari homepage
+    homepage_soup = get_soup(BASE_URL)
+    items_home = []
+    if homepage_soup:
+        items_home = parse_section(homepage_soup, 'Terbaru', 'ls8')
 
-            # Chapter terbaru (hanya untuk ls2 / ls4)
-            chapter_tag = article.find('a', class_='ls2l') or article.find('a', class_='ls24')
-            chapter = chapter_tag.text.strip() if chapter_tag else ''
-            chapter_link = BASE_URL + chapter_tag['href'] if chapter_tag else ''
+    # Ambil 20+ dari halaman /komik-terbaru/
+    terbaru_soup = get_soup(BASE_URL + '/komik-terbaru/')
+    items_page = []
+    if terbaru_soup:
+        articles = terbaru_soup.find_all('article', class_='ls4')
+        for article in articles:
+            komik = parse_article(article)
+            if komik:
+                items_page.append(komik)
 
-            # Genre (opsional, bisa dari berbagai class)
-            genre_tag = (
-                article.find('span', class_='ls2t') or
-                article.find('span', class_='ls4s') or
-                article.find('span')
-            )
-            genre = genre_tag.text.strip() if genre_tag else ''
-
-            # Rank jika ada
-            rank_tag = article.find('span', class_='hot')
-            rank = rank_tag.text.strip() if rank_tag else ''
-
-            komik_list.append({
-                'title': title,
-                'link': link,
-                'image_url': image_url,
-                'chapter': chapter,
-                'chapter_link': chapter_link,
-                'genre': genre,
-                'rank': rank
-            })
-        except Exception:
-            continue
-
-    return komik_list
+    # Gabungkan keduanya (hindari duplikat berdasarkan title)
+    seen = set()
+    combined = []
+    for item in items_home + items_page:
+        if item['title'] not in seen:
+            combined.append(item)
+            seen.add(item['title'])
+    return combined
 
 def get_all_sections():
-    soup = get_soup()
+    soup = get_soup(BASE_URL)
     if not soup:
         return {'error': 'Gagal mengambil halaman'}
 
-    # Ambil semua genre dari <select name="genre">
+    # Genre
     genres = []
     genre_select = soup.find('select', {'name': 'genre'})
     if genre_select:
@@ -92,18 +114,19 @@ def get_all_sections():
             if value and name.lower() != 'genre 1':
                 genres.append({'slug': value, 'name': name})
 
-    # Ambil semua section yang didefinisikan
+    # Sections
     section_data = []
+
+    # Sections dari peta biasa
     for section_id, label in SECTION_MAP.items():
-        if isinstance(label, dict):
-            for cls, sublabel in label.items():
-                items = parse_section(soup, section_id, cls)
-                if items:
-                    section_data.append({'title': sublabel, 'items': items})
-        else:
-            items = parse_section(soup, section_id)
-            if items:
-                section_data.append({'title': label, 'items': items})
+        items = parse_section(soup, section_id)
+        if items:
+            section_data.append({'title': label, 'items': items})
+
+    # Tambahkan Komik Terbaru dari 2 sumber
+    terbaru_items = get_komik_terbaru_combined()
+    if terbaru_items:
+        section_data.append({'title': 'Komik Terbaru', 'items': terbaru_items})
 
     return {
         'sections': section_data,
